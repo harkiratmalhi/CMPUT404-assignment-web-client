@@ -18,6 +18,7 @@
 # Write your own HTTP GET and POST
 # The point is to understand what you have to send and get experience with it
 
+from email import header
 import sys
 import socket
 import re
@@ -33,24 +34,42 @@ class HTTPResponse(object):
         self.body = body
 
 class HTTPClient(object):
-    #def get_host_port(self,url):
+    def get_host_port(self,url):
+        parsed_url = urllib.parse.urlparse(url)
+        if (parsed_url):
+            host = parsed_url.hostname
+            port = parsed_url.port
+            if (parsed_url.path):
+                path = parsed_url.path
+            else:
+                path = '/'
+        else:
+            port = 80
+            path = '/'
+
+        return host, port, path
 
     def connect(self, host, port):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.connect((host, port))
+        self.socket.settimeout(5)
         return None
 
     def get_code(self, data):
-        return None
+        #parse data and get code
+        get_data = data[0].split(' ')
+        code = get_data[1]
+        return int(code)
 
     def get_headers(self,data):
-        return None
+        return data.split("\r\n")
 
     def get_body(self, data):
-        return None
-    
+        return data.split('\r\n')[-1]
+
     def sendall(self, data):
         self.socket.sendall(data.encode('utf-8'))
+        return self.recvall(self.socket)
         
     def close(self):
         self.socket.close()
@@ -59,23 +78,65 @@ class HTTPClient(object):
     def recvall(self, sock):
         buffer = bytearray()
         done = False
-        while not done:
-            part = sock.recv(1024)
-            if (part):
-                buffer.extend(part)
-            else:
-                done = not part
+        print("SOCK: ", sock)
+        try:
+            while not done:
+                part = sock.recv(1024)
+                if (part):
+                    buffer.extend(part)
+                else:
+                    done = not part
+        except socket.timeout:
+            print("Socket timeout")
         return buffer.decode('utf-8')
 
     def GET(self, url, args=None):
-        code = 500
-        body = ""
+        url_host, url_port1, url_path = self.get_host_port(url)
+        parsed_url = urllib.parse.urlparse(url)
+        if parsed_url.port:
+            url_port = parsed_url.port
+        else:
+            # make it 80 otherwise
+            url_port = 80
+
+        #connect to host on port
+        #print("PORT1: ", url_port1)
+        #print("PORT: ", url_port)
+        #print(type(url_port1))
+        self.connect(url_host, url_port)
+
+        message = """GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n""".format(path=url_path,  host=url_host)
+        body = self.sendall(message)
+        get_header = self.get_headers(body)
+        code = self.get_code(get_header)
+        self.close()
+
         return HTTPResponse(code, body)
 
     def POST(self, url, args=None):
-        code = 500
-        body = ""
-        return HTTPResponse(code, body)
+        url_host, url_port1, url_path = self.get_host_port(url)
+        parsed_url = urllib.parse.urlparse(url)
+        if parsed_url.port:
+            url_port = parsed_url.port
+        else:
+            # make it 80 otherwise
+            url_port = 80
+        #connect to host on port
+        self.connect(url_host, url_port)
+
+        args_url = ""
+        if args != None:
+            args_url = urllib.parse.urlencode(args)
+
+        len_url = len(args_url)
+        message = """POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {length}\r\n\r\n{data}""".format(path=url_path, host=url_host,  length=len_url, data=args_url)
+
+        full_body = self.sendall(message)
+        get_header = self.get_headers(full_body)
+        body = get_header[-1]
+        code = self.get_code(get_header)
+        self.close()
+        return HTTPResponse(code,body)
 
     def command(self, url, command="GET", args=None):
         if (command == "POST"):
